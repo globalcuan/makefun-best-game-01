@@ -1,0 +1,7 @@
+export function createAudio() {
+  let ctx=null, master=null, muted=false, pulse=null, pulseGain=null;
+  function unlock(){ if(ctx) return; const AC=window.AudioContext||window.webkitAudioContext; if(!AC)return; ctx=new AC(); master=ctx.createGain(); master.gain.value=muted?0:0.22; master.connect(ctx.destination); pulse=ctx.createOscillator(); pulse.type='sine'; pulse.frequency.value=48; pulseGain=ctx.createGain(); pulseGain.gain.value=0.035; pulse.connect(pulseGain).connect(master); pulse.start(); }
+  window.addEventListener('pointerdown',unlock,{once:true}); window.addEventListener('keydown',unlock,{once:true});
+  function tone(freq,duration,type='sine',volume=0.18,endFreq=freq*0.55){ if(!ctx||muted)return; const o=ctx.createOscillator(),g=ctx.createGain(),t=ctx.currentTime; o.type=type;o.frequency.setValueAtTime(freq,t);o.frequency.exponentialRampToValueAtTime(Math.max(20,endFreq),t+duration);g.gain.setValueAtTime(volume,t);g.gain.exponentialRampToValueAtTime(0.001,t+duration);o.connect(g).connect(master);o.start(t);o.stop(t+duration); }
+  return { unlock, toggle(){muted=!muted;if(ctx)master.gain.setTargetAtTime(muted?0:0.22,ctx.currentTime,.03);return muted;}, get muted(){return muted;}, shot(){tone(620,.055,'square',.055,320);}, hit(){tone(190,.09,'triangle',.1,80);}, explode(){tone(125,.22,'sawtooth',.14,32);}, level(){tone(420,.32,'sine',.13,920);}, dash(){tone(260,.12,'triangle',.12,700);}, hurt(){tone(95,.24,'sawtooth',.2,40);}, pickup(){tone(880,.08,'sine',.06,1180);} };
+}
