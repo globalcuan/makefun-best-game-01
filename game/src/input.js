@@ -1,12 +1,57 @@
+// Track held keys and pointer state without coupling input to game behavior.
 export function createInput(canvas) {
-  const keys = new Set();
-  const mouse = { x: 0, y: 0, down: false };
-  let pressed = new Set();
-  window.addEventListener('keydown', e => { const k=e.key.toLowerCase(); if(!keys.has(k)) pressed.add(k); keys.add(k); if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault(); });
-  window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-  window.addEventListener('blur', () => { keys.clear(); mouse.down=false; });
-  canvas.addEventListener('pointermove', e => { const r=canvas.getBoundingClientRect(); mouse.x=(e.clientX-r.left)*canvas.width/r.width; mouse.y=(e.clientY-r.top)*canvas.height/r.height; });
-  canvas.addEventListener('pointerdown', e => { mouse.down=true; canvas.setPointerCapture?.(e.pointerId); });
-  window.addEventListener('pointerup', () => mouse.down=false);
-  return { keys, mouse, justPressed:k=>pressed.has(k), consume:()=>{pressed.clear();} };
+  const input = {
+    keys: new Set(),
+    previousKeys: new Set(),
+    mouse: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+    mouseDown: false,
+    mousePressed: false,
+    mouseReleased: false,
+    pointerStarted: false,
+  };
+
+  window.addEventListener('keydown', (event) => {
+    input.keys.add(event.code);
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+      event.preventDefault();
+    }
+  });
+
+  window.addEventListener('keyup', (event) => {
+    input.keys.delete(event.code);
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    const bounds = canvas.getBoundingClientRect();
+    input.mouse.x = event.clientX - bounds.left;
+    input.mouse.y = event.clientY - bounds.top;
+  });
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    input.pointerStarted = true;
+    input.mousePressed = !input.mouseDown;
+    input.mouseDown = true;
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  window.addEventListener('pointerup', (event) => {
+    if (event.button !== 0 || !input.mouseDown) {
+      return;
+    }
+    input.mouseDown = false;
+    input.mouseReleased = true;
+  });
+
+  input.isDown = (code) => input.keys.has(code);
+  input.wasPressed = (code) => input.keys.has(code) && !input.previousKeys.has(code);
+  input.finishFrame = () => {
+    input.previousKeys = new Set(input.keys);
+    input.mousePressed = false;
+    input.mouseReleased = false;
+  };
+
+  return input;
 }

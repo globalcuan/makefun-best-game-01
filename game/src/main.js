@@ -1,16 +1,94 @@
-import {createInput} from './input.js';
-import {createAudio} from './audio.js';
-import {createWorld} from './world.js';
-import {createRenderer} from './render.js';
-import {mulberry32} from './random.js';
-import {buildShot} from './shots.js';
-const canvas=document.querySelector('#game'),input=createInput(canvas),audio=createAudio(),renderer=createRenderer(canvas),params=new URLSearchParams(location.search),shot=params.get('shot');
-let world,last=performance.now();
-if(shot){world=buildShot(shot,Number(params.get('seed')||1),audio);renderer.render(world,true);document.title='shot-ready';}
-else{world=createWorld(Math.random,audio);const frame=now=>{const dt=Math.min(.05,(now-last)/1000);last=now;const s=world.state,k=input.keys;
- if(k.has('m')&&input.justPressed('m'))audio.toggle();
- if((k.has('p')||k.has('escape'))&&input.justPressed(k.has('p')?'p':'escape'))world.togglePause();
- if(s.mode==='title'&&(k.has('enter')||input.mouse.down)){world.start();audio.unlock();}
- else if(s.mode==='gameover'&&(k.has('r')||k.has('enter'))&&input.justPressed(k.has('r')?'r':'enter')){location.reload();}
- else if(s.mode==='levelup'){for(let i=0;i<3;i++)if(k.has(String(i+1))&&input.justPressed(String(i+1)))world.chooseUpgrade(i);if(input.mouse.down){const rect=canvas.getBoundingClientRect(),x=(input.mouse.x/1280)*1280;const i=Math.max(0,Math.min(2,Math.floor((x-350)/195)));world.chooseUpgrade(i);}}
- world.update(dt,input);renderer.render(world);input.consume();requestAnimationFrame(frame);};requestAnimationFrame(frame);}
+import { createInput } from './input.js';
+import { createAudio } from './audio.js';
+import { createWorld, resizeWorld, startGame, updateWorld, setMode, applyUpgrade } from './world.js';
+import { renderWorld } from './render.js';
+import { createShotScene } from './shots.js';
+import { mulberry32 } from './random.js';
+
+const canvas = document.querySelector('#game');
+const context = canvas.getContext('2d', { alpha: false });
+const input = createInput(canvas);
+const audio = createAudio();
+const parameters = new URLSearchParams(window.location.search);
+const shotName = parameters.get('shot');
+const shotSeed = Number.parseInt(parameters.get('seed') || '1', 10) || 1;
+let world = createWorld();
+let previousTime = 0;
+let animationFrame = 0;
+
+function resize() {
+  const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  canvas.width = Math.round(width * pixelRatio);
+  canvas.height = Math.round(height * pixelRatio);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  resizeWorld(world, width, height);
+  if (shotName) {
+    world = createShotScene(shotName, shotSeed, width, height);
+    renderShot();
+  }
+}
+
+function renderShot() {
+  renderWorld(context, world);
+  document.title = 'shot-ready';
+}
+
+function frame(timestamp) {
+  const rawDelta = previousTime === 0 ? 0 : (timestamp - previousTime) / 1000;
+  const delta = Math.min(0.033, Math.max(0, rawDelta));
+  previousTime = timestamp;
+  handleControls();
+  updateWorld(world, input, delta, audio);
+  renderWorld(context, world);
+  input.finishFrame();
+  animationFrame = window.requestAnimationFrame(frame);
+}
+
+function handleControls() {
+  if (input.wasPressed('KeyM')) {
+    audio.toggleMute();
+  }
+  if (world.mode === 'title') {
+    if (input.wasPressed('Enter') || input.mousePressed) {
+      audio.unlock();
+      startGame(world, audio);
+      previousTime = 0;
+    }
+    return;
+  }
+  if (world.mode === 'gameover') {
+    if (input.wasPressed('KeyR') || input.wasPressed('Enter')) {
+      audio.unlock();
+      startGame(world, audio);
+      previousTime = 0;
+    }
+    return;
+  }
+  if (world.mode === 'levelup') {
+    if (input.wasPressed('Digit1')) applyUpgrade(world, 0);
+    if (input.wasPressed('Digit2')) applyUpgrade(world, 1);
+    if (input.wasPressed('Digit3')) applyUpgrade(world, 2);
+    if (input.mousePressed) {
+      const cardWidth = 270;
+      const gap = 22;
+      const startX = (world.width - (cardWidth * 3 + gap * 2)) / 2;
+      const cardIndex = Math.floor((input.mouse.x - startX) / (cardWidth + gap));
+      if (cardIndex >= 0 && cardIndex < 3) applyUpgrade(world, cardIndex);
+    }
+    return;
+  }
+  if (input.wasPressed('KeyP') || input.wasPressed('Escape')) {
+    setMode(world, world.mode === 'paused' ? 'playing' : 'paused');
+  }
+}
+
+window.addEventListener('resize', resize);
+resize();
+if (shotName) {
+  if (animationFrame) window.cancelAnimationFrame(animationFrame);
+  renderShot();
+} else {
+  animationFrame = window.requestAnimationFrame(frame);
+}

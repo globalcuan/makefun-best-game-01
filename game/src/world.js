@@ -1,36 +1,617 @@
-import {CFG} from './config.js';
-import {range,unit,pick} from './random.js';
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-export const UPGRADES=[
- {id:'rapid',name:'HOT BARREL',desc:'Fire 18% faster',apply:p=>p.fireRate*=.82},
- {id:'power',name:'VOID CHARGE',desc:'Bullets deal +1 damage',apply:p=>p.damage++},
- {id:'multi',name:'SPLIT VOLLEY',desc:'Fire one extra projectile',apply:p=>p.shots=Math.min(5,p.shots+1)},
- {id:'speed',name:'ION THRUSTERS',desc:'Move 12% faster',apply:p=>p.speed*=1.12},
- {id:'magnet',name:'GRAVITY WELL',desc:'Shard magnet +55%',apply:p=>p.magnet*=1.55},
- {id:'hull',name:'REINFORCED HULL',desc:'Restore 2 hull and +1 max',apply:p=>{p.maxHull++;p.hull=Math.min(p.maxHull,p.hull+2)}}
-];
-export function createWorld(rng,audio) {
- const W=CFG.arena.width,H=CFG.arena.height;
- const w={rng,audio,mode:'title',time:0,score:0,wave:0,xp:0,level:1,nextXp:CFG.xpBase,player:{x:W/2,y:H/2,vx:0,vy:0,angle:0,hull:CFG.player.hull,maxHull:CFG.player.hull,speed:CFG.player.speed,fireRate:CFG.player.fireRate,damage:CFG.player.bulletDamage,shots:1,magnet:CFG.player.magnet,fire:0,dash:0,dashCd:0,invuln:0},bullets:[],enemies:[],shards:[],particles:[],floaters:[],stars:[],waveLeft:0,spawnTimer:0,waveTimer:0,boss:null,upgradeChoices:[],shake:0};
- for(let i=0;i<CFG.arena.stars;i++)w.stars.push({x:rng()*W,y:rng()*H,r:range(rng,.5,1.8),a:range(rng,.2,.8),phase:rng()*8});
- function particle(x,y,color,n=8,power=150){for(let i=0;i<n;i++){const d=unit(rng),s=range(rng,power*.25,power);w.particles.push({x,y,vx:d.x*s,vy:d.y*s,life:range(rng,.25,.65),max:.65,r:range(rng,1.4,3.4),color});}}
- function spawn(type,x,y,small=false){const base=CFG.enemies[type];const e={type,x,y,vx:0,vy:0,hp:base.hp*(1+Math.max(0,w.wave-1)*CFG.waves.hpPerWave),maxHp:base.hp*(1+Math.max(0,w.wave-1)*CFG.waves.hpPerWave),r:base.radius,speed:base.speed+Math.max(0,w.wave-1)*CFG.waves.speedPerWave,fire:range(rng,.3,1.4),flash:0,small};w.enemies.push(e);if(type==='boss')w.boss=e;return e;}
- function startWave(){w.wave++;w.waveTimer=0;if(w.wave%CFG.waves.bossEvery===0){spawn('boss',W/2,105);w.waveLeft=0;}else{w.waveLeft=CFG.waves.baseCount+(w.wave-1)*CFG.waves.countPerWave;w.spawnTimer=.25;}}
- function damagePlayer(){const p=w.player;if(p.invuln>0||w.mode!=='playing')return;p.hull--;p.invuln=CFG.player.invuln;w.shake=.35;audio?.hurt();particle(p.x,p.y,CFG.colors.red,18,220);if(p.hull<=0)w.mode='gameover';}
- function killEnemy(e){const idx=w.enemies.indexOf(e);if(idx<0)return;w.enemies.splice(idx,1);if(e===w.boss)w.boss=null;w.score+=CFG.enemies[e.type].score;particle(e.x,e.y,e.type==='boss'?CFG.colors.gold:CFG.colors.pink,e.type==='boss'?54:20,e.type==='boss'?330:210);audio?.explode();const n=e.type==='boss'?28:e.type==='splitter'?5:2;for(let i=0;i<n;i++)w.shards.push({x:e.x+range(rng,-9,9),y:e.y+range(rng,-9,9),vx:range(rng,-65,65),vy:range(rng,-65,65),r:e.type==='boss'?4:3,value:1,life:CFG.shards.life});if(e.type==='splitter')for(let i=0;i<2;i++)spawn('mini',e.x+range(rng,-8,8),e.y+range(rng,-8,8),true);}
- function firePlayer(){const p=w.player,base=p.angle;for(let i=0;i<p.shots;i++){const spread=(i-(p.shots-1)/2)*.14,a=base+spread;w.bullets.push({x:p.x+Math.cos(a)*17,y:p.y+Math.sin(a)*17,vx:Math.cos(a)*CFG.player.bulletSpeed,vy:Math.sin(a)*CFG.player.bulletSpeed,r:CFG.bullets.radius,life:CFG.bullets.playerLife,damage:p.damage,team:'player'});}audio?.shot();}
- function enemyFire(e,a){const speed=e.type==='boss'?230:255;w.bullets.push({x:e.x,y:e.y,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,r:e.type==='boss'?5:4,life:CFG.bullets.enemyLife,damage:1,team:'enemy'});}
- function update(dt,input){if(w.mode!=='playing')return;dt=Math.min(dt,.04);w.time+=dt;const p=w.player;const k=input?.keys||new Set(),m=input?.mouse||{x:p.x+1,y:p.y,down:false};p.angle=Math.atan2(m.y-p.y,m.x-p.x);p.invuln=Math.max(0,p.invuln-dt);p.dashCd=Math.max(0,p.dashCd-dt);p.dash=Math.max(0,p.dash-dt);p.fire-=dt;
-  let dx=(k.has('d')||k.has('arrowright')?1:0)-(k.has('a')||k.has('arrowleft')?1:0),dy=(k.has('s')||k.has('arrowdown')?1:0)-(k.has('w')||k.has('arrowup')?1:0);const len=Math.hypot(dx,dy)||1;dx/=len;dy/=len;
-  if((k.has('shift'))&&p.dashCd<=0){p.dash=CFG.player.dashTime;p.dashCd=CFG.player.dashCooldown;p.vx=dx*p.speed*2.9||Math.cos(p.angle)*CFG.player.dashSpeed;p.vy=dy*p.speed*2.9||Math.sin(p.angle)*CFG.player.dashSpeed;audio?.dash();}
-  if(p.dash<=0){p.vx+=(dx*p.speed-p.vx)*Math.min(1,CFG.player.accel*dt/Math.max(p.speed,1));p.vy+=(dy*p.speed-p.vy)*Math.min(1,CFG.player.accel*dt/Math.max(p.speed,1));if(!dx&&!dy){p.vx*=Math.pow(CFG.player.drag,dt*60);p.vy*=Math.pow(CFG.player.drag,dt*60);}}p.x=clamp(p.x+p.vx*dt,CFG.arena.margin,W-CFG.arena.margin);p.y=clamp(p.y+p.vy*dt,CFG.arena.margin,H-CFG.arena.margin);
-  if((m.down||k.has(' '))&&p.fire<=0){firePlayer();p.fire=p.fireRate;}
-  if(w.wave===0)startWave();if(w.waveLeft>0){w.spawnTimer-=dt;if(w.spawnTimer<=0){const pool=w.wave<3?['chaser','chaser','splitter']:['chaser','chaser','splitter','shooter'];const type=pick(rng,pool),a=rng()*Math.PI*2,r=Math.max(W,H)*.57;spawn(type,clamp(p.x+Math.cos(a)*r,20,W-20),clamp(p.y+Math.sin(a)*r,20,H-20));w.waveLeft--;w.spawnTimer=CFG.waves.spawnGap;}}
-  for(const e of [...w.enemies]){const a=Math.atan2(p.y-e.y,p.x-e.x),d=Math.hypot(p.x-e.x,p.y-e.y);e.flash=Math.max(0,e.flash-dt);if(e.type==='shooter'){const desire=d>300?1:d<210?-1:0;e.vx+=(Math.cos(a)*e.speed*desire-e.vx)*dt*1.4;e.vy+=(Math.sin(a)*e.speed*desire-e.vy)*dt*1.4;e.fire-=dt;if(e.fire<=0&&d<570){enemyFire(e,a);e.fire=CFG.enemies.shooter.fireRate;}}else if(e.type==='boss'){e.vx+=(Math.cos(a)*e.speed-e.vx)*dt*.8;e.vy+=(Math.sin(a)*e.speed-e.vy)*dt*.8;e.fire-=dt;if(e.fire<=0){for(let i=0;i<12;i++)enemyFire(e,w.time*.38+i*Math.PI/6);e.fire=CFG.enemies.boss.fireRate;}}else{e.vx+=(Math.cos(a)*e.speed-e.vx)*dt*1.8;e.vy+=(Math.sin(a)*e.speed-e.vy)*dt*1.8;}e.x+=e.vx*dt;e.y+=e.vy*dt;if(d<e.r+p.r+2&&p.dash<=0)damagePlayer();}
-  for(const b of w.bullets){b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;if(b.team==='player'){for(const e of [...w.enemies])if(Math.hypot(e.x-b.x,e.y-b.y)<e.r+b.r){e.hp-=b.damage;e.flash=.09;particle(b.x,b.y,CFG.colors.cyan,CFG.particles.hit,100);b.life=0;if(e.hp<=0)killEnemy(e);break;}}else if(Math.hypot(p.x-b.x,p.y-b.y)<p.r+b.r){b.life=0;damagePlayer();}}w.bullets=w.bullets.filter(b=>b.life>0&&b.x>-20&&b.x<W+20&&b.y>-20&&b.y<H+20);
-  for(const s of w.shards){s.life-=dt;const d=Math.hypot(p.x-s.x,p.y-s.y);if(d<p.magnet){const a=Math.atan2(p.y-s.y,p.x-s.x),pull=CFG.shards.speed*(1-d/p.magnet*.45);s.vx+=(Math.cos(a)*pull-s.vx)*dt*4;s.vy+=(Math.sin(a)*pull-s.vy)*dt*4;}s.x+=s.vx*dt;s.y+=s.vy*dt;if(d<p.r+s.r+4){s.life=0;w.xp+=s.value;audio?.pickup();if(w.xp>=w.nextXp){w.xp-=w.nextXp;w.level++;w.nextXp=Math.round(CFG.xpBase*Math.pow(w.level,1.35));w.mode='levelup';w.upgradeChoices=[...UPGRADES].sort(()=>rng()-.5).slice(0,3);audio?.level();}}}w.shards=w.shards.filter(s=>s.life>0);
-  for(const q of w.particles){q.x+=q.vx*dt;q.y+=q.vy*dt;q.vx*=Math.pow(.06,dt);q.vy*=Math.pow(.06,dt);q.life-=dt;}w.particles=w.particles.filter(q=>q.life>0);w.shake=Math.max(0,w.shake-dt);if(w.waveLeft===0&&w.enemies.length===0&&!w.boss){w.waveTimer+=dt;if(w.waveTimer>CFG.waves.waveDelay){w.waveTimer=0;startWave();}}
- }
- function chooseUpgrade(i){const u=w.upgradeChoices[i];if(!u)return;u.apply(w.player);w.mode='playing';w.upgradeChoices=[];}
- return {state:w,update,start(){w.mode='playing';},togglePause(){if(w.mode==='playing')w.mode='paused';else if(w.mode==='paused')w.mode='playing';},chooseUpgrade,damagePlayer,spawn,particle,killEnemy};
+import { ARENA, PLAYER, DASH, WEAPONS, CHASER, SHOOTER, SPLITTER, DASHER, ORBITER, BOSS, WAVES, XP, COMBO, UPGRADES } from './config.js';
+import { range, rangeInt, pick, fromAngle } from './random.js';
+
+const ENEMY_TYPES = ['chaser', 'shooter', 'splitter', 'dasher', 'orbiter'];
+
+export function createWorld(random = Math.random) {
+  const world = {
+    width: ARENA.width,
+    height: ARENA.height,
+    random,
+    time: 0,
+    mode: 'title',
+    player: null,
+    enemies: [],
+    bullets: [],
+    shards: [],
+    particles: [],
+    floaters: [],
+    shockwaves: [],
+    boss: null,
+    wave: 0,
+    waveBanner: 0,
+    intermission: 0,
+    spawnQueue: [],
+    spawnTimer: 0,
+    score: 0,
+    kills: 0,
+    combo: 0,
+    comboTimer: 0,
+    elapsed: 0,
+    slowMotion: 0,
+    shake: 0,
+    lowHullPulse: 0,
+    upgrades: [],
+    level: 1,
+    xp: 0,
+    xpNeeded: XP.firstLevel,
+    stats: { fireRate: 1, damage: 1, extraShot: 0, bulletSpeed: 1, moveSpeed: 1, dashRecharge: 1, magnet: 1, shardValue: 1, pierce: 0, bulletSize: 1 },
+    stars: Array.from({ length: ARENA.starCount }, () => ({ x: random() * ARENA.width, y: random() * ARENA.height, size: 0.5 + random() * 1.8, phase: random() * Math.PI * 2 })),
+    audio: null,
+  };
+  world.player = makePlayer(world);
+  return world;
+}
+
+function makePlayer(world) {
+  return { x: world.width / 2, y: world.height / 2, vx: 0, vy: 0, angle: -Math.PI / 2, hull: PLAYER.maxHull, maxHull: PLAYER.maxHull, fireTimer: 0, dashTimer: 0, dashCooldown: 0, dashDirection: { x: 0, y: -1 }, invulnerable: 0, muzzleFlash: 0, trail: [], hitFlash: 0 };
+}
+
+export function resizeWorld(world, width, height) {
+  world.width = width;
+  world.height = height;
+  if (world.player && world.mode === 'title') {
+    world.player.x = width / 2;
+    world.player.y = height / 2;
+  }
+}
+
+export function startGame(world, audio) {
+  const fresh = createWorld(world.random);
+  Object.assign(world, fresh);
+  world.mode = 'playing';
+  world.audio = audio;
+  beginIntermission(world, 1);
+  if (audio) {
+    audio.startBass(1);
+  }
+}
+
+export function setMode(world, mode) {
+  world.mode = mode;
+}
+
+export function updateWorld(world, input, dt, audio) {
+  world.audio = audio || world.audio;
+  if (world.mode === 'title') {
+    world.time += dt;
+    updateAmbient(world, dt);
+    return;
+  }
+  if (world.mode !== 'playing') {
+    updateAmbient(world, dt * 0.35);
+    return;
+  }
+  const scaledDelta = world.slowMotion > 0 ? dt * 0.42 : dt;
+  world.time += scaledDelta;
+  world.elapsed += scaledDelta;
+  world.slowMotion = Math.max(0, world.slowMotion - dt);
+  world.shake = Math.max(0, world.shake - dt * 26);
+  world.lowHullPulse = Math.max(0, world.lowHullPulse - dt);
+  updatePlayer(world, input, scaledDelta, audio);
+  updateSpawning(world, scaledDelta, audio);
+  updateEnemies(world, scaledDelta, audio);
+  updateBullets(world, scaledDelta, audio);
+  updateShards(world, scaledDelta, audio);
+  updateEffects(world, scaledDelta);
+  updateCombo(world, scaledDelta);
+  updateWaveFlow(world, scaledDelta, audio);
+  if (world.player.hull <= 0) {
+    world.player.hull = 0;
+    world.mode = 'gameover';
+    if (audio) audio.stopBass();
+  }
+}
+
+function updateAmbient(world, dt) {
+  world.player.angle += dt * 0.12;
+  updateEffects(world, dt);
+}
+
+function updatePlayer(world, input, dt, audio) {
+  const player = world.player;
+  const horizontal = Number(input.isDown('KeyD') || input.isDown('ArrowRight')) - Number(input.isDown('KeyA') || input.isDown('ArrowLeft'));
+  const vertical = Number(input.isDown('KeyS') || input.isDown('ArrowDown')) - Number(input.isDown('KeyW') || input.isDown('ArrowUp'));
+  const movementLength = Math.hypot(horizontal, vertical) || 1;
+  const directionX = horizontal / movementLength;
+  const directionY = vertical / movementLength;
+  const speed = PLAYER.moveSpeed * world.stats.moveSpeed;
+  player.vx += directionX * PLAYER.acceleration * dt;
+  player.vy += directionY * PLAYER.acceleration * dt;
+  const velocityLength = Math.hypot(player.vx, player.vy);
+  if (velocityLength > speed) {
+    player.vx = player.vx / velocityLength * speed;
+    player.vy = player.vy / velocityLength * speed;
+  }
+  const friction = Math.pow(PLAYER.drag, dt * 60);
+  player.vx *= friction;
+  player.vy *= friction;
+  player.x = clamp(player.x + player.vx * dt, PLAYER.radius, world.width - PLAYER.radius);
+  player.y = clamp(player.y + player.vy * dt, PLAYER.radius, world.height - PLAYER.radius);
+  const scaleX = world.width / (window.innerWidth || world.width);
+  const scaleY = world.height / (window.innerHeight || world.height);
+  const targetX = input.mouse.x * scaleX;
+  const targetY = input.mouse.y * scaleY;
+  player.angle = Math.atan2(targetY - player.y, targetX - player.x);
+  player.invulnerable = Math.max(0, player.invulnerable - dt);
+  player.dashCooldown = Math.max(0, player.dashCooldown - dt * world.stats.dashRecharge);
+  player.dashTimer = Math.max(0, player.dashTimer - dt);
+  player.fireTimer = Math.max(0, player.fireTimer - dt);
+  player.muzzleFlash = Math.max(0, player.muzzleFlash - dt);
+  player.hitFlash = Math.max(0, player.hitFlash - dt);
+  player.trail.unshift({ x: player.x, y: player.y, life: 0.3 });
+  player.trail = player.trail.slice(0, 12).map((point) => ({ ...point, life: point.life - dt }));
+  player.trail = player.trail.filter((point) => point.life > 0);
+
+  if ((input.wasPressed('ShiftLeft') || input.wasPressed('ShiftRight')) && player.dashCooldown <= 0) {
+    let dashX = directionX;
+    let dashY = directionY;
+    if (!horizontal && !vertical) {
+      dashX = Math.cos(player.angle);
+      dashY = Math.sin(player.angle);
+    }
+    player.dashDirection = { x: dashX, y: dashY };
+    player.dashTimer = DASH.duration;
+    player.dashCooldown = DASH.cooldown;
+    player.invulnerable = DASH.invulnerability;
+    player.vx = dashX * DASH.speed;
+    player.vy = dashY * DASH.speed;
+    world.shake = Math.max(world.shake, 4);
+    if (audio) audio.dash();
+  }
+  if (player.dashTimer > 0) {
+    player.x = clamp(player.x + player.dashDirection.x * DASH.speed * dt, PLAYER.radius, world.width - PLAYER.radius);
+    player.y = clamp(player.y + player.dashDirection.y * DASH.speed * dt, PLAYER.radius, world.height - PLAYER.radius);
+  }
+  if ((input.mouseDown || input.isDown('Space')) && player.fireTimer <= 0) {
+    firePlayer(world, audio);
+  }
+}
+
+function firePlayer(world, audio) {
+  const player = world.player;
+  const count = 1 + world.stats.extraShot;
+  for (let shotIndex = 0; shotIndex < count; shotIndex += 1) {
+    const centeredIndex = shotIndex - (count - 1) / 2;
+    const angle = player.angle + centeredIndex * WEAPONS.spreadAngle;
+    const vector = fromAngle(angle, WEAPONS.bulletSpeed * world.stats.bulletSpeed);
+    world.bullets.push({ x: player.x + Math.cos(angle) * 23, y: player.y + Math.sin(angle) * 23, vx: vector.x, vy: vector.y, radius: WEAPONS.bulletRadius * world.stats.bulletSize, damage: WEAPONS.bulletDamage * world.stats.damage, life: WEAPONS.bulletLife, friendly: true, pierce: world.stats.pierce, hitIds: [] });
+  }
+  player.fireTimer = WEAPONS.fireInterval / world.stats.fireRate;
+  player.muzzleFlash = WEAPONS.muzzleFlashTime;
+  spawnParticles(world, player.x + Math.cos(player.angle) * 24, player.y + Math.sin(player.angle) * 24, '#aafaff', 3, 90);
+  if (audio) audio.shoot();
+}
+
+function updateSpawning(world, dt, audio) {
+  if (world.waveBanner > 0) {
+    world.waveBanner = Math.max(0, world.waveBanner - dt);
+  }
+  if (world.intermission > 0) {
+    world.intermission -= dt;
+    if (world.intermission <= 0) {
+      world.wave += 1;
+      beginWave(world, audio);
+    }
+    return;
+  }
+  if (world.spawnQueue.length === 0) {
+    return;
+  }
+  world.spawnTimer -= dt;
+  if (world.spawnTimer > 0) {
+    return;
+  }
+  const groupSize = Math.min(WAVES.maxGroupSize, world.spawnQueue.length, rangeInt(world.random, 1, WAVES.maxGroupSize));
+  for (let index = 0; index < groupSize; index += 1) {
+    spawnEnemy(world, world.spawnQueue.shift());
+  }
+  world.spawnTimer = WAVES.groupDelay;
+}
+
+function beginIntermission(world, nextWave) {
+  world.intermission = WAVES.intermission;
+  world.wave = nextWave - 1;
+  world.waveBanner = 0;
+}
+
+function beginWave(world, audio) {
+  world.waveBanner = 1.8;
+  if (world.wave % 5 === 0) {
+    world.boss = makeBoss(world);
+    world.spawnQueue = [];
+    if (audio) audio.bossWarning();
+    return;
+  }
+  world.boss = null;
+  const count = Math.floor(WAVES.firstWaveCount + world.wave * WAVES.countPerWave);
+  const pool = enemyPoolForWave(world.wave);
+  world.spawnQueue = Array.from({ length: count }, () => pick(world.random, pool));
+  world.spawnTimer = 0.35;
+}
+
+function enemyPoolForWave(wave) {
+  const pool = ['chaser', 'chaser', 'chaser', 'shooter'];
+  if (wave >= 2) pool.push('splitter');
+  if (wave >= 3) pool.push('dasher');
+  if (wave >= 4) pool.push('orbiter');
+  if (wave >= 7) pool.push('shooter', 'splitter', 'dasher');
+  return pool;
+}
+
+function edgePosition(world) {
+  const edge = rangeInt(world.random, 0, 3);
+  if (edge === 0) return { x: -25, y: range(world.random, 30, world.height - 30) };
+  if (edge === 1) return { x: world.width + 25, y: range(world.random, 30, world.height - 30) };
+  if (edge === 2) return { x: range(world.random, 30, world.width - 30), y: -25 };
+  return { x: range(world.random, 30, world.width - 30), y: world.height + 25 };
+}
+
+function spawnEnemy(world, type, position = edgePosition(world), extra = {}) {
+  const configs = { chaser: CHASER, shooter: SHOOTER, splitter: SPLITTER, dasher: DASHER, orbiter: ORBITER, mini: { ...CHASER, radius: SPLITTER.miniRadius, speed: SPLITTER.miniSpeed, health: SPLITTER.miniHealth, score: 45, xp: 1, color: '#dba7ff' } };
+  const config = configs[type];
+  const scale = 1 + Math.max(0, world.wave - 1) * 0.075;
+  world.enemies.push({ id: `${type}-${world.time}-${world.random()}`, type, x: position.x, y: position.y, vx: 0, vy: 0, radius: config.radius, health: config.health * scale, maxHealth: config.health * scale, speed: config.speed * (1 + Math.max(0, world.wave - 1) * 0.025), damage: config.contactDamage || 10, score: config.score, xp: config.xp, color: config.color, fireTimer: range(world.random, 0.3, 1.5), state: 'approach', stateTimer: range(world.random, 0.4, 1.2), angle: 0, hitFlash: 0, orbitDirection: world.random() < 0.5 ? -1 : 1, ...extra });
+}
+
+function makeBoss(world) {
+  return { x: world.width / 2, y: world.height * 0.31, vx: 0, vy: 0, radius: BOSS.radius, health: BOSS.health * (1 + (world.wave / 5 - 1) * 0.4), maxHealth: BOSS.health * (1 + (world.wave / 5 - 1) * 0.4), angle: 0, fireTimer: 0.7, aimedTimer: 1.5, summonTimer: BOSS.summonInterval, spiralTimer: 0, spiralAngle: 0, hitFlash: 0, phase: 1, score: BOSS.score };
+}
+
+function updateEnemies(world, dt, audio) {
+  for (const enemy of world.enemies) {
+    enemy.fireTimer -= dt;
+    enemy.stateTimer -= dt;
+    enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+    const dx = world.player.x - enemy.x;
+    const dy = world.player.y - enemy.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    const towardX = dx / distance;
+    const towardY = dy / distance;
+    if (enemy.type === 'chaser' || enemy.type === 'mini' || enemy.type === 'splitter') {
+      enemy.vx += towardX * enemy.speed * dt * 2.2;
+      enemy.vy += towardY * enemy.speed * dt * 2.2;
+    } else if (enemy.type === 'shooter') {
+      const rangeDelta = distance - SHOOTER.preferredRange;
+      const strafe = enemy.orbitDirection;
+      enemy.vx += (towardX * clamp(rangeDelta, -90, 90) * 0.6 - towardY * strafe * 45) * dt;
+      enemy.vy += (towardY * clamp(rangeDelta, -90, 90) * 0.6 + towardX * strafe * 45) * dt;
+      if (enemy.fireTimer <= 0) {
+        fireEnemy(world, enemy, towardX, towardY, SHOOTER.boltSpeed, SHOOTER.boltDamage, '#ffbb57', 6);
+        enemy.fireTimer = SHOOTER.fireInterval * range(world.random, 0.85, 1.2);
+      }
+    } else if (enemy.type === 'orbiter') {
+      const rangeDelta = distance - ORBITER.preferredRange;
+      enemy.vx += (towardX * rangeDelta * 0.36 - towardY * enemy.orbitDirection * 62) * dt;
+      enemy.vy += (towardY * rangeDelta * 0.36 + towardX * enemy.orbitDirection * 62) * dt;
+      if (enemy.fireTimer <= 0) {
+        fireEnemy(world, enemy, towardX, towardY, ORBITER.orbSpeed, ORBITER.orbDamage, '#55e8da', 9, 'orb');
+        enemy.fireTimer = ORBITER.fireInterval;
+      }
+    } else if (enemy.type === 'dasher') {
+      updateDasher(world, enemy, dt, towardX, towardY);
+    }
+    const velocity = Math.hypot(enemy.vx, enemy.vy);
+    const maxSpeed = enemy.type === 'dasher' && enemy.state === 'charge' ? DASHER.chargeSpeed : enemy.speed;
+    if (velocity > maxSpeed) {
+      enemy.vx = enemy.vx / velocity * maxSpeed;
+      enemy.vy = enemy.vy / velocity * maxSpeed;
+    }
+    enemy.x += enemy.vx * dt;
+    enemy.y += enemy.vy * dt;
+    enemy.vx *= Math.pow(0.92, dt * 60);
+    enemy.vy *= Math.pow(0.92, dt * 60);
+    enemy.angle = Math.atan2(enemy.vy, enemy.vx);
+    collideEnemyPlayer(world, enemy, audio);
+  }
+  if (world.boss) updateBoss(world, dt, audio);
+}
+
+function updateDasher(world, enemy, dt, towardX, towardY) {
+  if (enemy.state === 'approach' && enemy.stateTimer <= 0) {
+    enemy.state = 'telegraph';
+    enemy.stateTimer = DASHER.telegraphTime;
+    enemy.chargeDirection = { x: towardX, y: towardY };
+    enemy.vx = 0;
+    enemy.vy = 0;
+  } else if (enemy.state === 'telegraph' && enemy.stateTimer <= 0) {
+    enemy.state = 'charge';
+    enemy.stateTimer = DASHER.chargeTime;
+    enemy.vx = enemy.chargeDirection.x * DASHER.chargeSpeed;
+    enemy.vy = enemy.chargeDirection.y * DASHER.chargeSpeed;
+  } else if (enemy.state === 'charge' && enemy.stateTimer <= 0) {
+    enemy.state = 'approach';
+    enemy.stateTimer = DASHER.pauseTime;
+  }
+}
+
+function fireEnemy(world, enemy, directionX, directionY, speed, damage, color, radius, kind = 'bolt') {
+  world.bullets.push({ x: enemy.x + directionX * enemy.radius, y: enemy.y + directionY * enemy.radius, vx: directionX * speed, vy: directionY * speed, radius, damage, life: 4, friendly: false, color, kind });
+}
+
+function updateBoss(world, dt, audio) {
+  const boss = world.boss;
+  boss.angle += dt * (boss.phase === 2 ? 0.8 : 0.38);
+  boss.hitFlash = Math.max(0, boss.hitFlash - dt);
+  boss.x += Math.sin(world.time * 0.55) * BOSS.moveSpeed * dt;
+  boss.x = clamp(boss.x, boss.radius + 24, world.width - boss.radius - 24);
+  boss.y = world.height * 0.3 + Math.sin(world.time * 0.8) * 34;
+  boss.fireTimer -= dt;
+  boss.aimedTimer -= dt;
+  boss.summonTimer -= dt;
+  if (boss.health < boss.maxHealth * 0.5) boss.phase = 2;
+  if (boss.fireTimer <= 0) {
+    fireRadial(world, boss, boss.phase === 2 ? 16 : 12, boss.phase === 2 ? 270 : 220, boss.phase === 2 ? 1 : 0);
+    boss.fireTimer = boss.phase === 2 ? 0.85 : BOSS.radialInterval;
+    if (audio) audio.explosion();
+  }
+  if (boss.aimedTimer <= 0) {
+    fireSpread(world, boss);
+    boss.aimedTimer = boss.phase === 2 ? 1.35 : BOSS.aimedInterval;
+  }
+  if (boss.phase === 2) {
+    boss.spiralTimer -= dt;
+    if (boss.spiralTimer <= 0) {
+      const direction = fromAngle(boss.spiralAngle, 235);
+      world.bullets.push({ x: boss.x, y: boss.y, vx: direction.x, vy: direction.y, radius: 6, damage: 11, life: 4, friendly: false, color: '#ff61e4', kind: 'spiral' });
+      boss.spiralAngle += 0.34;
+      boss.spiralTimer = BOSS.spiralInterval;
+    }
+  }
+  if (boss.summonTimer <= 0) {
+    for (let index = 0; index < 3; index += 1) {
+      const angle = world.random() * Math.PI * 2;
+      spawnEnemy(world, 'chaser', { x: boss.x + Math.cos(angle) * 120, y: boss.y + Math.sin(angle) * 100 });
+    }
+    boss.summonTimer = BOSS.summonInterval;
+  }
+}
+
+function fireRadial(world, boss, count, speed, angleOffset) {
+  const offset = world.time * angleOffset;
+  for (let index = 0; index < count; index += 1) {
+    const angle = index / count * Math.PI * 2 + offset;
+    const vector = fromAngle(angle, speed);
+    world.bullets.push({ x: boss.x, y: boss.y, vx: vector.x, vy: vector.y, radius: 6, damage: 12, life: 4.5, friendly: false, color: '#ff62df', kind: 'boss' });
+  }
+}
+
+function fireSpread(world, boss) {
+  const baseAngle = Math.atan2(world.player.y - boss.y, world.player.x - boss.x);
+  for (let offset = -1; offset <= 1; offset += 1) {
+    const vector = fromAngle(baseAngle + offset * 0.23, 340);
+    world.bullets.push({ x: boss.x, y: boss.y, vx: vector.x, vy: vector.y, radius: 7, damage: 17, life: 4, friendly: false, color: '#ffaceb', kind: 'boss' });
+  }
+}
+
+function updateBullets(world, dt, audio) {
+  for (const bullet of world.bullets) {
+    bullet.x += bullet.vx * dt;
+    bullet.y += bullet.vy * dt;
+    bullet.life -= dt;
+    if (bullet.friendly) {
+      for (const enemy of world.enemies) {
+        if (bullet.hitIds.includes(enemy.id)) continue;
+        if (distanceSquared(bullet, enemy) <= (bullet.radius + enemy.radius) ** 2) {
+          enemy.health -= bullet.damage;
+          enemy.hitFlash = 0.12;
+          bullet.hitIds.push(enemy.id);
+          if (audio) audio.hit();
+          spawnParticles(world, bullet.x, bullet.y, enemy.color, 4, 125);
+          if (bullet.pierce <= 0) bullet.life = 0;
+          else bullet.pierce -= 1;
+          if (enemy.health <= 0) killEnemy(world, enemy, audio);
+          break;
+        }
+      }
+      if (world.boss && bullet.life > 0 && distanceSquared(bullet, world.boss) <= (bullet.radius + world.boss.radius) ** 2) {
+        world.boss.health -= bullet.damage;
+        world.boss.hitFlash = 0.12;
+        bullet.life = bullet.pierce > 0 ? bullet.life : 0;
+        if (bullet.pierce > 0) bullet.pierce -= 1;
+        spawnParticles(world, bullet.x, bullet.y, '#ff72e4', 5, 145);
+        if (world.boss.health <= 0) killBoss(world, audio);
+      }
+    } else if (world.player.invulnerable <= 0 && distanceSquared(bullet, world.player) <= (bullet.radius + PLAYER.radius) ** 2) {
+      hurtPlayer(world, bullet.damage, audio);
+      bullet.life = 0;
+    }
+  }
+  world.bullets = world.bullets.filter((bullet) => bullet.life > 0 && bullet.x > -80 && bullet.x < world.width + 80 && bullet.y > -80 && bullet.y < world.height + 80);
+}
+
+function collideEnemyPlayer(world, enemy, audio) {
+  if (world.player.invulnerable > 0) return;
+  if (distanceSquared(enemy, world.player) <= (enemy.radius + PLAYER.radius) ** 2) {
+    hurtPlayer(world, enemy.damage, audio);
+    const dx = enemy.x - world.player.x;
+    const dy = enemy.y - world.player.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    enemy.vx += dx / distance * 180;
+    enemy.vy += dy / distance * 180;
+  }
+}
+
+function hurtPlayer(world, damage, audio) {
+  world.player.hull -= damage;
+  world.player.invulnerable = PLAYER.invulnerability;
+  world.player.hitFlash = 0.25;
+  world.slowMotion = PLAYER.hurtSlowTime;
+  world.lowHullPulse = 0.55;
+  world.shake = Math.max(world.shake, 13);
+  spawnParticles(world, world.player.x, world.player.y, '#ff4e75', 14, 220);
+  if (audio) audio.hurt();
+}
+
+function killEnemy(world, enemy, audio) {
+  const index = world.enemies.indexOf(enemy);
+  if (index < 0) return;
+  world.enemies.splice(index, 1);
+  world.kills += 1;
+  world.combo = world.comboTimer > 0 ? Math.min(COMBO.maxMultiplier, world.combo + 0.25) : 1;
+  world.comboTimer = COMBO.window;
+  const multiplier = Math.max(1, Math.floor(world.combo));
+  const points = enemy.score * multiplier;
+  world.score += points;
+  world.floaters.push({ x: enemy.x, y: enemy.y, text: `+${points}`, color: '#ffe48a', life: 1.05, maxLife: 1.05 });
+  spawnShards(world, enemy.x, enemy.y, enemy.xp);
+  spawnParticles(world, enemy.x, enemy.y, enemy.color, 17, 210);
+  world.shockwaves.push({ x: enemy.x, y: enemy.y, radius: 8, maxRadius: enemy.radius * 3, life: 0.36, maxLife: 0.36, color: enemy.color });
+  world.shake = Math.max(world.shake, enemy.radius > 20 ? 6 : 3);
+  if (enemy.type === 'splitter') {
+    spawnEnemy(world, 'mini', { x: enemy.x - 7, y: enemy.y }, { orbitDirection: -1 });
+    spawnEnemy(world, 'mini', { x: enemy.x + 7, y: enemy.y }, { orbitDirection: 1 });
+  }
+  if (audio) audio.explosion();
+}
+
+function killBoss(world, audio) {
+  const boss = world.boss;
+  if (!boss) return;
+  world.score += BOSS.score;
+  world.kills += 1;
+  world.floaters.push({ x: boss.x, y: boss.y, text: `VOIDMOTHER +${BOSS.score}`, color: '#ff9be9', life: 1.8, maxLife: 1.8 });
+  spawnShards(world, boss.x, boss.y, BOSS.shardCount);
+  spawnParticles(world, boss.x, boss.y, '#ff4ddd', 90, 390);
+  world.shockwaves.push({ x: boss.x, y: boss.y, radius: 30, maxRadius: 410, life: 1.05, maxLife: 1.05, color: '#ff4ddd' });
+  world.shake = 28;
+  world.boss = null;
+  world.bullets = world.bullets.filter((bullet) => bullet.friendly);
+  if (audio) audio.explosion();
+}
+
+function spawnShards(world, x, y, count) {
+  for (let index = 0; index < count; index += 1) {
+    const angle = world.random() * Math.PI * 2;
+    const speed = range(world.random, 35, 140);
+    world.shards.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, radius: XP.shardRadius, value: world.stats.shardValue * XP.shardValue, life: 22, phase: world.random() * Math.PI * 2 });
+  }
+}
+
+function updateShards(world, dt, audio) {
+  for (const shard of world.shards) {
+    shard.life -= dt;
+    const dx = world.player.x - shard.x;
+    const dy = world.player.y - shard.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    if (distance < PLAYER.magnetRadius * world.stats.magnet) {
+      shard.vx += dx / distance * XP.magnetSpeed * dt;
+      shard.vy += dy / distance * XP.magnetSpeed * dt;
+      const velocity = Math.hypot(shard.vx, shard.vy);
+      if (velocity > XP.magnetSpeed) {
+        shard.vx = shard.vx / velocity * XP.magnetSpeed;
+        shard.vy = shard.vy / velocity * XP.magnetSpeed;
+      }
+    } else {
+      shard.vx *= Math.pow(0.9, dt * 60);
+      shard.vy *= Math.pow(0.9, dt * 60);
+    }
+    shard.x += shard.vx * dt;
+    shard.y += shard.vy * dt;
+    if (distance < PLAYER.radius + shard.radius + 4) {
+      world.xp += shard.value;
+      world.score += 5;
+      shard.life = 0;
+      if (audio) audio.pickup();
+      while (world.xp >= world.xpNeeded) {
+        world.xp -= world.xpNeeded;
+        world.level += 1;
+        world.xpNeeded = Math.floor(XP.firstLevel * Math.pow(XP.growth, world.level - 1));
+        world.mode = 'levelup';
+        world.upgrades = selectUpgrades(world);
+        if (audio) audio.levelUp();
+        break;
+      }
+    }
+  }
+  world.shards = world.shards.filter((shard) => shard.life > 0);
+}
+
+function selectUpgrades(world) {
+  const choices = UPGRADES.slice();
+  const result = [];
+  while (result.length < 3 && choices.length > 0) {
+    const index = Math.floor(world.random() * choices.length);
+    result.push(choices.splice(index, 1)[0]);
+  }
+  return result;
+}
+
+export function applyUpgrade(world, index) {
+  const upgrade = world.upgrades[index];
+  if (!upgrade) return;
+  const stats = world.stats;
+  if (upgrade.id === 'fireRate') stats.fireRate *= 1.18;
+  if (upgrade.id === 'damage') stats.damage *= 1.35;
+  if (upgrade.id === 'extraShot') stats.extraShot = Math.min(4, stats.extraShot + 1);
+  if (upgrade.id === 'bulletSpeed') stats.bulletSpeed *= 1.25;
+  if (upgrade.id === 'moveSpeed') stats.moveSpeed *= 1.12;
+  if (upgrade.id === 'dash') stats.dashRecharge *= 1.25;
+  if (upgrade.id === 'magnet') stats.magnet *= 1.45;
+  if (upgrade.id === 'hull') {
+    world.player.maxHull += 25;
+    world.player.hull = Math.min(world.player.maxHull, world.player.hull + 25);
+  }
+  if (upgrade.id === 'shardValue') stats.shardValue += 1;
+  if (upgrade.id === 'pierce') stats.pierce = Math.min(4, stats.pierce + 1);
+  if (upgrade.id === 'bulletSize') {
+    stats.bulletSize *= 1.25;
+    stats.damage *= 1.1;
+  }
+  world.mode = 'playing';
+  world.upgrades = [];
+}
+
+function updateEffects(world, dt) {
+  for (const particle of world.particles) {
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    particle.vx *= Math.pow(0.94, dt * 60);
+    particle.vy *= Math.pow(0.94, dt * 60);
+    particle.life -= dt;
+  }
+  world.particles = world.particles.filter((particle) => particle.life > 0);
+  for (const floater of world.floaters) {
+    floater.y -= 28 * dt;
+    floater.life -= dt;
+  }
+  world.floaters = world.floaters.filter((floater) => floater.life > 0);
+  for (const wave of world.shockwaves) {
+    const progress = 1 - wave.life / wave.maxLife;
+    wave.radius = wave.maxRadius * progress;
+    wave.life -= dt;
+  }
+  world.shockwaves = world.shockwaves.filter((wave) => wave.life > 0);
+}
+
+function updateCombo(world, dt) {
+  if (world.comboTimer > 0) {
+    world.comboTimer -= dt;
+    if (world.comboTimer <= 0) world.combo = 0;
+  }
+}
+
+function updateWaveFlow(world, dt, audio) {
+  if (world.intermission > 0 || world.spawnQueue.length > 0 || world.spawnTimer > 0) return;
+  if (world.enemies.length === 0 && !world.boss) {
+    beginIntermission(world, world.wave + 1);
+    world.waveBanner = 0;
+  }
+  if (audio && world.wave > 0 && world.waveBanner > 0) audio.setBassWave(world.wave);
+}
+
+function spawnParticles(world, x, y, color, count, speed) {
+  for (let index = 0; index < count; index += 1) {
+    const angle = world.random() * Math.PI * 2;
+    const velocity = range(world.random, speed * 0.22, speed);
+    world.particles.push({ x, y, vx: Math.cos(angle) * velocity, vy: Math.sin(angle) * velocity, radius: range(world.random, 1, 3.8), color, life: range(world.random, 0.22, 0.72), maxLife: 0.72 });
+  }
+}
+
+function distanceSquared(first, second) {
+  return (first.x - second.x) ** 2 + (first.y - second.y) ** 2;
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
 }
